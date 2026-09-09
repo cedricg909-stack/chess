@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Chess Against Bot</title>
+  <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
+  <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+  <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+  
+  <style>
+    body { display: flex; flex-direction: column; align-items: center; font-family: sans-serif; background: #1a1a1a; color: #fff; margin-top: 20px; }
+    #board { width: 400px; margin: 10px 0; }
+    .controls { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+    select, button { padding: 8px 12px; font-size: 14px; border-radius: 4px; border: none; cursor: pointer; }
+    .btn-green { background: #4CAF50; color: white; font-weight: bold; }
+    .btn-orange { background: #ff9800; color: white; font-weight: bold; }
+    .btn-blue { background: #2196F3; color: white; font-weight: bold; }
+    #status { font-size: 18px; font-weight: bold; margin-bottom: 10px; color: #4CAF50; }
+    
+    .captured-panel { width: 400px; font-size: 18px; min-height: 24px; display: flex; align-items: center; justify-content: flex-start; gap: 4px; }
+    .captured-panel span { line-height: 1; }
+    
+    .highlight-square { background-color: rgba(255, 255, 0, 0.5) !important; }
+    .highlight-move { background-color: rgba(0, 255, 0, 0.4) !important; }
+  </style>
+</head>
+<body>
+  <h1>Web Chess (AI Bot)</h1>
+  
+  <div id="status">White's Turn</div>
+
+  <div class="controls">
+    <label for="user-color">Play As: </label>
+    <select id="user-color" onchange="resetGame()">
+      <option value="w" selected>White</option>
+      <option value="b">Black</option>
+    </select>
+
+    <label for="difficulty">Difficulty: </label>
+    <select id="difficulty">
+      <option value="1">Easy</option>
+      <option value="2" selected>Medium</option>
+      <option value="3">Hard</option>
+    </select>
+
+    <button class="btn-blue" onclick="switchSides()">Swap Sides</button>
+    <button class="btn-orange" onclick="undoMove()">Undo</button>
+    <button class="btn-green" onclick="resetGame()">New Game</button>
+  </div>
+
+  <div class="captured-panel" id="top-captured"></div>
+  <div id="board"></div>
+  <div class="captured-panel" id="bottom-captured"></div>
+
+  <script>
+    const game = new Chess();
+    let board = null;
+    let userColor = 'w';
+
+    const pieceValues = { p: 10, r: 50, n: 30, b: 30, q: 90, k: 900 };
+    const pieceSymbols = {
+      w: { p: '♙', r: '♖', n: '♘', b: '♗', q: '♕' },
+      b: { p: '♟', r: '♜', n: '♞', b: '♝', q: '♛' }
+    };
+
+    function removeHighlights() {
+      $('#board .square-55d63').removeClass('highlight-square highlight-move');
+    }
+
+    function highlightSquare(square, className) {
+      $(`#board .square-${square}`).addClass(className);
+    }
+
+    function updateCapturedPieces() {
+      const initialCounts = { p: 8, r: 2, n: 2, b: 2, q: 1, k: 1 };
+      const currentCounts = { w: { p: 0, r: 0, n: 0, b: 0, q: 0, k: 0 }, b: { p: 0, r: 0, n: 0, b: 0, q: 0, k: 0 } };
+
+      game.board().forEach(row => {
+        row.forEach(piece => {
+          if (piece) currentCounts[piece.color][piece.type]++;
+        });
+      });
+
+      let capturedByWhite = '';
+      let capturedByBlack = '';
+
+      ['p', 'n', 'b', 'r', 'q'].forEach(type => {
+        const missingBlack = initialCounts[type] - currentCounts['b'][type];
+        const missingWhite = initialCounts[type] - currentCounts['w'][type];
+        if (missingBlack > 0) capturedByWhite += pieceSymbols.b[type].repeat(missingBlack);
+        if (missingWhite > 0) capturedByBlack += pieceSymbols.w[type].repeat(missingWhite);
+      });
+
+      if (userColor === 'w') {
+        $('#top-captured').html('Captured by Bot (Black): <span>' + capturedByBlack + '</span>');
+        $('#bottom-captured').html('Captured by You (White): <span>' + capturedByWhite + '</span>');
+      } else {
+        $('#top-captured').html('Captured by Bot (White): <span>' + capturedByWhite + '</span>');
+        $('#bottom-captured').html('Captured by You (Black): <span>' + capturedByBlack + '</span>');
+      }
+    }
+
+    function updateStatus() {
+      let statusText = '';
+      const turnName = game.turn() === 'w' ? "White" : "Black";
+      const isUserTurn = game.turn() === userColor;
+
+      if (game.in_checkmate()) {
+        statusText = `Game Over: ${game.turn() === 'w' ? 'Black' : 'White'} wins by Checkmate!`;
+      } else if (game.in_draw()) {
+        statusText = 'Game Over: Draw / Stalemate!';
+      } else {
+        statusText = isUserTurn ? `Your Turn (${turnName})` : `Bot is thinking... (${turnName})`;
+        if (game.in_check()) statusText += ' (Check!)';
+      }
+
+      $('#status').text(statusText);
+      updateCapturedPieces();
+    }
+
+    function showLegalMoves(square) {
+      const moves = game.moves({ square: square, verbose: true });
+      if (moves.length === 0) return;
+      highlightSquare(square, 'highlight-square');
+      for (let i = 0; i < moves.length; i++) {
+        highlightSquare(moves[i].to, 'highlight-move');
+      }
+    }
+
+    function onDragStart(source, piece) {
+      // Prevent moving if game is over or if it's the bot's turn
+      if (game.game_over() || game.turn() !== userColor) return false;
+      
+      // Ensure player only picks up their own pieces
+      const pieceColor = piece.search(/^w/) !== -1 ? 'w' : 'b';
+      if (pieceColor !== userColor) return false;
+
+      showLegalMoves(source);
+    }
+
+    function onDrop(source, target) {
+      removeHighlights();
+      const move = game.move({ from: source, to: target, promotion: 'q' });
+      if (move === null) return 'snapback';
+      
+      updateStatus();
+      window.setTimeout(makeBotMove, 250);
+    }
+
+    function onMouseoverSquare(square, piece) {
+      if (piece && game.turn() === userColor) {
+        const pieceColor = piece.search(/^w/) !== -1 ? 'w' : 'b';
+        if (pieceColor === userColor) showLegalMoves(square);
+      }
+    }
+
+    function onMouseoutSquare() {
+      removeHighlights();
+    }
+
+    function evaluateBoard(boardState) {
+      let totalEvaluation = 0;
+      const botColor = userColor === 'w' ? 'b' : 'w';
+      boardState.forEach(row => {
+        row.forEach(piece => {
+          if (piece) {
+            const val = pieceValues[piece.type];
+            totalEvaluation += piece.color === botColor ? val : -val;
+          }
+        });
+      });
+      return totalEvaluation;
+    }
+
+    function minimax(depth, alpha, beta, isMaximizing) {
+      if (depth === 0 || game.game_over()) return evaluateBoard(game.board());
+
+      const moves = game.moves();
+      if (isMaximizing) {
+        let maxEval = -Infinity;
+        for (let move of moves) {
+          game.move(move);
+          let evaluation = minimax(depth - 1, alpha, beta, false);
+          game.undo();
+          maxEval = Math.max(maxEval, evaluation);
+          alpha = Math.max(alpha, evaluation);
+          if (beta <= alpha) break;
+        }
+        return maxEval;
+      } else {
+        let minEval = Infinity;
+        for (let move of moves) {
+          game.move(move);
+          let evaluation = minimax(depth - 1, alpha, beta, true);
+          game.undo();
+          minEval = Math.min(minEval, evaluation);
+          beta = Math.min(beta, evaluation);
+          if (beta <= alpha) break;
+        }
+        return minEval;
+      }
+    }
+
+    function getBestMove(depth) {
+      const moves = game.moves();
+      let bestMove = null;
+      let bestValue = -Infinity;
+
+      for (let move of moves) {
+        game.move(move);
+        let boardValue = minimax(depth - 1, -Infinity, Infinity, false);
+        game.undo();
+        if (boardValue > bestValue) {
+          bestValue = boardValue;
+          bestMove = move;
+        }
+      }
+      return bestMove;
+    }
+
+    function makeBotMove() {
+      const moves = game.moves();
+      if (game.game_over() || moves.length === 0 || game.turn() === userColor) return;
+
+      const depth = parseInt($('#difficulty').val());
+      let chosenMove;
+
+      if (depth === 1) {
+        chosenMove = moves[Math.floor(Math.random() * moves.length)];
+      } else {
+        chosenMove = getBestMove(depth);
+      }
+
+      game.move(chosenMove);
+      board.position(game.fen());
+      updateStatus();
+    }
+
+    function undoMove() {
+      // Revert player's and bot's turns
+      if (game.history().length >= 2) {
+        game.undo();
+        game.undo();
+      } else {
+        resetGame();
+        return;
+      }
+      board.position(game.fen());
+      removeHighlights();
+      updateStatus();
+    }
+
+    function switchSides() {
+      userColor = userColor === 'w' ? 'b' : 'w';
+      $('#user-color').val(userColor);
+      resetGame();
+    }
+
+    function resetGame() {
+      game.reset();
+      userColor = $('#user-color').val();
+      
+      board.orientation(userColor === 'w' ? 'white' : 'black');
+      board.start();
+      removeHighlights();
+      updateStatus();
+
+      // If user plays as Black, bot plays the first move as White
+      if (userColor === 'b') {
+        window.setTimeout(makeBotMove, 400);
+      }
+    }
+
+    board = Chessboard('board', {
+      draggable: true,
+      position: 'start',
+      pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png',
+      onDragStart: onDragStart,
+      onDrop: onDrop,
+      onMouseoverSquare: onMouseoverSquare,
+      onMouseoutSquare: onMouseoutSquare,
+      onSnapEnd: () => board.position(game.fen())
+    });
+
+    resetGame();
+  </script>
+</body>
+</html>
